@@ -1,0 +1,11 @@
+node_modules/
+*.log
+*.last
+qwen_accounts.json
+qwen_rotation.json
+qwen_bx.json
+qwen_bx_visible.json
+qwen_pending_mails.log
+ds_account.json
+ds_outlook_creds.json
+.env

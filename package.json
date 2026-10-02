@@ -1,0 +1,14 @@
+{
+  "name": "ucchat-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "OpenAI-compatible API over uncensored.chat edge + local CDP bridge (qwen/perplexity)",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "bridge": "node bridge.mjs"
+  }
+}

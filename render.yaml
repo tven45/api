@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: ucchat-api
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm run start
+    healthCheckPath: /health
+    envVars:
+      - key: BRIDGE_KEY
+        sync: false
+      - key: UC_PACE_MS
+        value: "75000"
