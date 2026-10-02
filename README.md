@@ -20,8 +20,8 @@ OpenAI-compatible API hosted on Render. Two backends:
 | `kimi-k2` | uc edge | verified 2026-10-02 |
 | `perplexity` | bridge (pplxchat) | verified 2026-10-02 |
 | `qwen3.7-plus` | bridge (qwenchat) | verified 2026-10-02 (quota-gated ~daily) |
-| `qwen3.8-max` | bridge (qwenchat) | added 2026-10-02 (unverified) |
-| `qwen3.8-omni-flash` | bridge (qwenchat) | added 2026-10-02 (unverified) |
+| `qwen3.8-max` | bridge (qwenchat) | smoke-tested 2026-10-02 |
+| `qwen3.8-omni-flash` | bridge (qwenchat) | smoke-tested 2026-10-02 (replies, may decline exact-echo prompts) |
 
 Not listed (not working at verification time): `pi` (Cloudflare challenge).
 
