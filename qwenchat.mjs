@@ -1,6 +1,6 @@
 // qwenchat.mjs "<prompt>" [--model qwen3.8-max] — qwen.ai via CDP in-page fetch
 // v2: account rotation (qwen_accounts.json) + guest fallback; rotates on RateLimited/auth expiry
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, appendFileSync } from 'node:fs';
 
 const argv = process.argv.slice(2);
 let model = process.env.QWEN_MODEL || 'qwen3.7-plus';
@@ -22,7 +22,8 @@ const log = (...a) => console.error(new Date().toISOString().slice(11, 19), ...a
 const PACE = 60000;
 const stamp = TEMP + '\\qwenchat.last';
 const MAX_ACCT_TRIES = 3;
-const BUDGET_MS = 200000;
+const BUDGET_MS = 300000;
+const DUMP = process.env.QW_DUMP ? TEMP + '\\qw_stream_dump.txt' : null;
 
 try { const last = Number(readFileSync(stamp, 'utf8')); const wait = PACE - (Date.now() - last); if (wait > 0) { log(`pacing: waiting ${Math.ceil(wait / 1000)}s`); await sleep(wait); } } catch {}
 
@@ -126,11 +127,12 @@ function pickBx(acct) {
 }
 
 // ---------- request expr ----------
-function makeExpr(BX, MODE) {
+function makeExpr(BX, MODE, THINK = true) {
   return `(() => {
     const P = ${JSON.stringify(prompt)};
     const MODEL = ${JSON.stringify(model)};
     const MODE = ${JSON.stringify(MODE)};
+    const THINK = ${JSON.stringify(THINK)};
     const race = (p, ms, label) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout ' + label)), ms))]);
     const nf = () => (crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16); }));
     const H = ${JSON.stringify({ ua: BX.ua, umid: BX.umid, v: BX.v, ver: BX.ver, tz: BX.tz })};
@@ -156,7 +158,7 @@ function makeExpr(BX, MODE) {
         if (!chatId) return { stage, fail: true, status: r1.status, body: t1.slice(0, 300), rh: rh1 };
 
         stage = 'completions';
-        const body = { stream: true, version: '2.1', incremental_output: true, chatId, parentId: '', chat_id: chatId, chat_mode: MODE, model: MODEL, parent_id: null, messages: [{ fid: nf(), role: 'user', content: P, user_action: 'chat', files: [], timestamp: Math.floor(Date.now() / 1000), models: [MODEL], model: '', chat_type: 't2t', feature_config: { thinking_enabled: false, output_schema: 'phase', research_mode: 'normal', auto_thinking: false, thinking_mode: 'Auto', thinking_format: 'summary' } }] };
+        const body = { stream: true, version: '2.1', incremental_output: true, chatId, parentId: '', chat_id: chatId, chat_mode: MODE, model: MODEL, parent_id: null, messages: [{ fid: nf(), role: 'user', content: P, user_action: 'chat', files: [], timestamp: Math.floor(Date.now() / 1000), models: [MODEL], model: '', chat_type: 't2t', feature_config: { thinking_enabled: THINK, output_schema: 'phase', research_mode: 'normal', auto_thinking: THINK, thinking_mode: 'Auto', thinking_format: 'full' } }] };
         const r2 = await race(fetch('/api/v2/chat/completions?chat_id=' + chatId, { method: 'POST', headers: mk('/c/guest', 'text/event-stream'), body: JSON.stringify(body), signal: AbortSignal.timeout(25000) }), 30000, 'completions');
         const rh = r2.headers.get('retry-after');
         if (r2.status !== 200) { const t2 = await r2.text(); return { stage, fail: true, status: r2.status, ct: r2.headers.get('content-type') || '', body: t2.slice(0, 350), rh }; }
@@ -165,24 +167,37 @@ function makeExpr(BX, MODE) {
         stage = 'stream';
         const reader = r2.body.getReader();
         const dec = new TextDecoder();
-        let buf = '', out = '', ended = false, streamErr = null;
+        let buf = '', out = '', think = '', thinkBlob = '', ended = false, streamErr = null;
+        const rawLines = [];
         const t0 = Date.now();
         const handleLine = line => {
           const m = line.match(/^data:\\s*(.+)$/); if (!m) return;
           const p = m[1].trim(); if (p === '[DONE]') { ended = true; return; }
+          if (rawLines.length < 500) rawLines.push(line.slice(0, 4000));
           try {
             const j = JSON.parse(p);
             if (j.error) { streamErr = j.error; ended = true; return; }
             const ch = j.choices && j.choices[0];
-            if (ch && ch.delta && typeof ch.delta.content === 'string' && ch.delta.content) {
-              const ph = ch.delta.phase || '';
-              if (ph === '' || ph === 'answer') out += ch.delta.content;
+            if (ch && ch.delta) {
+              const d = ch.delta;
+              const ph = d.phase || '';
+              if (typeof d.content === 'string' && d.content) {
+                if (ph === '' || ph === 'answer') out += d.content;
+                else think += d.content;
+              }
+              if (ph && ph.indexOf('think') === 0 && d.extra) {
+                const t = d.extra.summary_title && Array.isArray(d.extra.summary_title.content) ? d.extra.summary_title.content.join('') : '';
+                const s = d.extra.summary_thought && Array.isArray(d.extra.summary_thought.content) ? d.extra.summary_thought.content.join('') : '';
+                const blob = (t ? t + '\\n\\n' : '') + s;
+                if (blob.trim()) thinkBlob = blob;
+              }
+              if (typeof d.reasoning_content === 'string' && d.reasoning_content) think += d.reasoning_content;
             }
             if (j.response && (j.response.completed || j.response.finished)) ended = true;
             if (ch && ch.finish_reason) ended = true;
           } catch {}
         };
-        while (Date.now() - t0 < 75000 && !ended) {
+        while (Date.now() - t0 < 180000 && !ended) {
           let chunk;
           try { chunk = await race(reader.read(), 25000, 'read'); } catch (e) { break; }
           if (chunk.done) break;
@@ -194,8 +209,8 @@ function makeExpr(BX, MODE) {
         }
         if (buf) handleLine(buf);
         try { reader.cancel(); } catch {}
-        if (streamErr) return { stage, fail: true, errObj: streamErr, out: out.slice(0, 500) };
-        return { stage: 'done', out };
+        if (streamErr) return { stage, fail: true, errObj: streamErr, out: out.slice(0, 500), raw: rawLines };
+        return { stage: 'done', out, think: think || thinkBlob, raw: rawLines };
       } catch (e) {
         return { stage, fail: true, err: String((e && e.message) || e) };
       }
@@ -203,9 +218,14 @@ function makeExpr(BX, MODE) {
   })()`;
 }
 
-async function runAttempt(BX, MODE) {
-  const res = await rpc(ws, 'Runtime.evaluate', { expression: makeExpr(BX, MODE), returnByValue: true, awaitPromise: true }, 115000);
-  return res?.result?.value;
+async function runAttempt(BX, MODE, THINK = true) {
+  const res = await rpc(ws, 'Runtime.evaluate', { expression: makeExpr(BX, MODE, THINK), returnByValue: true, awaitPromise: true }, 240000);
+  const v = res?.result?.value;
+  if (DUMP && v && Array.isArray(v.raw) && v.raw.length) {
+    try { appendFileSync(DUMP, '--- ' + new Date().toISOString() + ' stage=' + v.stage + ' ---\n' + v.raw.join('\n') + '\n'); } catch {}
+  }
+  if (v) delete v.raw;
+  return v;
 }
 
 function classify(v) {
@@ -260,7 +280,7 @@ async function harvest() {
 
 // ---------- main ----------
 const t0 = Date.now();
-let out = null;
+let out = null, think = '';
 try {
   const now = Date.now();
   const order = [];
@@ -284,6 +304,13 @@ try {
     let c = classify(v);
     log(`acct[${i}] ${acct.username || ''} → ${c.kind} ${c.msg ? '(' + String(c.msg).slice(0, 420) + ')' : ''}`);
 
+    if (c.kind !== 'OK' && v && v.stage === 'completions') {
+      log(`acct[${i}] completions fail → retry without thinking`);
+      v = await runAttempt(bxv, 'normal', false).catch(e => ({ fail: true, err: 'run ex: ' + String(e).slice(0, 120) }));
+      c = classify(v);
+      log(`acct[${i}] retry(no-think) → ${c.kind}`);
+    }
+
     if (c.kind === 'AUTH') {
       log(`acct[${i}] auth fail → reload/retry once (refresh cookie)`);
       await ev(ws, 'location.reload()').catch(() => {});
@@ -295,7 +322,7 @@ try {
 
     if (c.kind === 'OK') {
       state.lastIdx = i; state.stats.ok++; saveState();
-      out = v.out; log(`USED account[${i}] ${acct.username || acct.email}`); break;
+      out = v.out; think = v.think || ''; log(`USED account[${i}] ${acct.username || acct.email}`); break;
     }
     const s2 = st(i);
     if (c.kind === 'RATE') { s2.cool = Date.now() + c.retryAfter * 1000; state.stats.rate++; saveState(); log(`acct[${i}] cooldown ${c.retryAfter}s`); continue; }
@@ -316,18 +343,26 @@ try {
     if (bx) {
       let v = await runAttempt(bx, 'guest').catch(e => ({ fail: true, err: 'run ex: ' + String(e).slice(0, 120) }));
       let c = classify(v);
+      if (c.kind !== 'OK' && v && v.stage === 'completions') {
+        log('guest completions fail → retry without thinking');
+        v = await runAttempt(bx, 'guest', false).catch(e => ({ fail: true, err: 'run ex' }));
+        c = classify(v);
+      }
       if (v && !v.fail && (v.err || !v.out)) {
         log('guest attempt1 fail@' + v.stage + ': ' + String(v.err || 'empty').slice(0, 150) + ' → re-harvest');
         const fresh = await harvest();
         if (fresh) { bx = fresh; await sleep(2000); v = await runAttempt(bx, 'guest').catch(e => ({ fail: true, err: 'run ex' })); c = classify(v); }
       }
-      if (c.kind === 'OK') { state.stats.guest++; saveState(); out = v.out; log('USED guest'); }
+      if (c.kind === 'OK') { state.stats.guest++; saveState(); out = v.out; think = v.think || ''; log('USED guest'); }
       else { state.stats.err++; saveState(); log('guest fail: ' + c.kind + ' ' + String(c.msg || '').slice(0, 180)); }
     } else log('guest harvest failed');
   }
 
-  if (out) console.log(out);
-  else { console.error('FAIL all accounts + guest — ' + JSON.stringify(state.stats)); process.exitCode = 1; }
+  if (out) {
+    if (think) log('thinking captured:', think.length, 'chars →', think.slice(0, 100).replace(/\n/g, ' '));
+    if (process.env.QW_JSON === '1') console.log(JSON.stringify({ reply: out, reasoning: think || '' }));
+    else console.log(out);
+  } else { console.error('FAIL all accounts + guest — ' + JSON.stringify(state.stats)); process.exitCode = 1; }
 } finally {
   writeFileSync(stamp, String(Date.now()));
   ws.removeEventListener('message', bxListener);
