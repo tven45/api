@@ -20,8 +20,10 @@ OpenAI-compatible API hosted on Render. Two backends:
 | `kimi-k2` | uc edge | verified 2026-10-02 |
 | `perplexity` | bridge (pplxchat) | verified 2026-10-02 |
 | `qwen3.7-plus` | bridge (qwenchat) | verified 2026-10-02 (quota-gated ~daily) |
+| `qwen3.8-max` | bridge (qwenchat) | added 2026-10-02 (unverified) |
+| `qwen3.8-omni-flash` | bridge (qwenchat) | added 2026-10-02 (unverified) |
 
-Not listed (not working at verification time): `qwen3.8-max`, `qwen3.8-omni-flash` (account quota), `pi` (Cloudflare challenge).
+Not listed (not working at verification time): `pi` (Cloudflare challenge).
 
 ## API
 
