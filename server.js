@@ -165,11 +165,19 @@ async function chat(prompt) {
     }
     await sleep(5000);
   }
-  if (!page) throw new Error('chat page fetch failed');
-  const msgs = page.props.messages || [];
-  const last = [...msgs].reverse().find(x => x.role === 'assistant');
-  if (!last) throw new Error(`no reply after polling (stream: ${streamInfo})`);
-  return { reply: last.content, chatId: uuid };
+  if (page) {
+    const msgs = page.props.messages || [];
+    const last = [...msgs].reverse().find(x => x.role === 'assistant');
+    if (last) return { reply: last.content, chatId: uuid };
+  }
+  // fallback: assemble reply from the stream payload itself
+  const streamText = [...sraw.matchAll(/data:\s*(\{[^}]*\})/g)]
+    .map(m => { try { return JSON.parse(m[1]); } catch { return null; } })
+    .filter(o => o && typeof o.content === 'string')
+    .map(o => o.content)
+    .join('');
+  if (streamText.trim()) return { reply: streamText, chatId: uuid };
+  throw new Error(`no reply after polling (stream: ${streamInfo})`);
 }
 
 // ---------- bridge job queue ----------
