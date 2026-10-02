@@ -294,7 +294,7 @@ async function handleBridge(req, res, pathname) {
     try { b = JSON.parse(await readBody(req)); } catch { b = null; }
     if (!b || !b.id) return sendJson(res, { error: 'need {id, reply|error}' }, 400);
     queue = queue.filter(x => x.id !== b.id);
-    const val = b.error ? { error: String(b.error).slice(0, 500) } : { reply: String(b.reply || ''), at: Date.now() };
+    const val = b.error ? { error: String(b.error).slice(0, 500) } : { reply: String(b.reply || ''), reasoning: String(b.reasoning || ''), at: Date.now() };
     results.set(b.id, { value: val, at: Date.now() });
     return sendJson(res, { ok: true });
   }
