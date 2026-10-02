@@ -36,6 +36,8 @@ curl https://<service-url>/v1/chat/completions \
 
 Streaming (`"stream": true`) is supported. Legacy: `GET /?prompt=...&backend=qwen|pi|pplx|uc`.
 
+**Thinking:** qwen models reply with `reasoning_content` on `choices[0].message` (non-stream) or as a `delta.reasoning_content` chunk before the content chunks (stream) — OpenAI/DeepSeek-style reasoning passthrough. uc/perplexity models don't think.
+
 ## Run locally
 
 ```bash
