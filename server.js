@@ -337,7 +337,11 @@ async function handler(req, res) {
     modelParam = body?.model || modelParam;
   }
   if (!prompt) {
-    if (pathname === '/') return sendJson(res, { ok: false, error: 'GET /?prompt=...&backend=qwen|pi|pplx|uc | POST {"prompt"} | POST /v1/chat/completions (OpenAI) | GET /v1/models' }, 400);
+    if (pathname === '/') {
+      const help = 'GET /?prompt=...&backend=qwen|pi|pplx|uc | POST {"prompt"} | POST /v1/chat/completions (OpenAI) | GET /v1/models';
+      if (req.method === 'GET') return sendJson(res, { ok: true, service: 'ucchat-api', models: MODELS.length, help });
+      return sendJson(res, { ok: false, error: help }, 400);
+    }
     return sendOaiError(res, `Unknown route: ${pathname}`, 404, 'invalid_request_error', 'unknown_route');
   }
   try {
