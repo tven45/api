@@ -18,8 +18,8 @@ let lastRun = 0;
 
 const JOB_TTL_S = 900;
 const POLL_MS = 2000;
-const JOB_TIMEOUT_MS = 90000;
-const QUEUE_MAX_AGE_MS = 300000;
+const JOB_TIMEOUT_MS = 360000;
+const QUEUE_MAX_AGE_MS = 600000;
 
 // verified models only (README lists verification status)
 const MODELS = ['uncensored-v3', 'gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-5', 'gpt-5-nano', 'deepseek-chat', 'kimi-k2', 'qwen3.7-plus', 'qwen3.8-max', 'qwen3.8-omni-flash', 'perplexity'];
@@ -206,7 +206,7 @@ async function getViaBridge(backend, prompt, model) {
   const v = await pollJob(id, JOB_TIMEOUT_MS);
   if (!v) throw new Error('bridge timeout — is bridge.mjs running?');
   if (v.error) throw new Error('bridge: ' + v.error);
-  return { reply: String(v.reply || '') };
+  return { reply: String(v.reply || ''), reasoning: String(v.reasoning || '') };
 }
 
 async function replyVia(prompt, model, forced) {
@@ -226,13 +226,15 @@ async function replyVia(prompt, model, forced) {
 }
 
 // ---------- OpenAI surface ----------
-function completionBody(model, content, prompt) {
+function completionBody(model, content, prompt, reasoning) {
+  const message = { role: 'assistant', content };
+  if (reasoning) message.reasoning_content = reasoning;
   return {
     id: 'chatcmpl-' + rand(),
     object: 'chat.completion',
     created: Math.floor(Date.now() / 1000),
     model,
-    choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop', logprobs: null }],
+    choices: [{ index: 0, message, finish_reason: 'stop', logprobs: null }],
     usage: { prompt_tokens: estTokens(prompt), completion_tokens: estTokens(content), total_tokens: estTokens(prompt) + estTokens(content) },
   };
 }
@@ -248,7 +250,7 @@ async function handleCompletions(req, res) {
   if (!body.stream) {
     try {
       const out = await replyVia(prompt, model, null);
-      return sendJson(res, completionBody(model, out.reply, prompt));
+      return sendJson(res, completionBody(model, out.reply, prompt, out.reasoning));
     } catch (e) {
       const msg = String(e.message || e);
       return sendOaiError(res, msg, /bridge timeout/.test(msg) ? 504 : 502);
@@ -268,6 +270,7 @@ async function handleCompletions(req, res) {
     res.write(chunk({ role: 'assistant', content: '' }));
     const out = await replyVia(prompt, model, null);
     const text = out.reply;
+    if (out.reasoning) res.write(chunk({ reasoning_content: out.reasoning }));
     const step = Math.max(1, Math.ceil(text.length / 24));
     for (let i = 0; i < text.length; i += step) res.write(chunk({ content: text.slice(i, i + step) }));
     res.write(chunk({}, 'stop'));

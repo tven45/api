@@ -12,8 +12,8 @@ const KEY = process.env.BRIDGE_KEY;
 if (!KEY) { console.error('[bridge] BRIDGE_KEY env var is required'); process.exit(1); }
 const TEMP = process.env.TEMP;
 const CLIENTS = { qwen: 'qwenchat.mjs', pi: 'pichat.mjs', pplx: 'pplxchat.mjs' };
-const JOB_MAX_AGE_MS = 300000;
-const RUN_TIMEOUT_MS = 300000;
+const JOB_MAX_AGE_MS = 600000;
+const RUN_TIMEOUT_MS = 480000;
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -37,6 +37,7 @@ function runClient(script, prompt, model) {
   return new Promise(resolve => {
     const env = Object.assign({}, process.env);
     if (model && /^qwen3[\w.-]*$/.test(String(model))) env.QWEN_MODEL = String(model);
+    env.QW_JSON = '1';
     const local = join(DIR, script);
     const path = existsSync(local) ? local : (TEMP ? join(TEMP, script) : local);
     execFile(process.execPath, [path, prompt], { timeout: RUN_TIMEOUT_MS, windowsHide: true, maxBuffer: 8 * 1024 * 1024, env }, (err, stdout, stderr) => {
@@ -81,9 +82,13 @@ async function main() {
     const secs = ((Date.now() - t0) / 1000).toFixed(1);
 
     if (!res.err && res.stdout.trim()) {
-      const reply = res.stdout.trim();
-      console.log(`[${ts()}] job ${job.id} ok in ${secs}s (${reply.length} chars): ${reply.slice(0, 100).replace(/\n/g, ' ')}`);
-      await postResult(job.id, { reply }).catch(e => console.log(`[${ts()}] result post failed: ${e.message}`));
+      let reply = res.stdout.trim(), reasoning = '';
+      try {
+        const j = JSON.parse(res.stdout);
+        if (j && typeof j.reply === 'string' && j.reply) { reply = j.reply; reasoning = typeof j.reasoning === 'string' ? j.reasoning : ''; }
+      } catch {}
+      console.log(`[${ts()}] job ${job.id} ok in ${secs}s (${reply.length} chars${reasoning ? ', thinking ' + reasoning.length : ''}): ${reply.slice(0, 100).replace(/\n/g, ' ')}`);
+      await postResult(job.id, reasoning ? { reply, reasoning } : { reply }).catch(e => console.log(`[${ts()}] result post failed: ${e.message}`));
     } else {
       const msg = (res.stderr || '').trim().split('\n').slice(-3).join(' | ').slice(0, 400) || (res.err ? String(res.err.message || res.err) : 'empty output');
       console.log(`[${ts()}] job ${job.id} FAIL in ${secs}s: ${msg}`);
